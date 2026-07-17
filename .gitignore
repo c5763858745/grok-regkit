@@ -29,3 +29,11 @@ cpa_auths/*
 .vscode/
 DrissionPage/
 autoPortData/
+
+# local runtime
+server.pid
+uvicorn.err
+uvicorn.log
+pip-install.log*
+*.err
+

@@ -51,6 +51,7 @@ SECRET_FIELDS = {
     "yyds_api_key",
     "yyds_jwt",
     "grok2api_remote_app_key",
+    "cpa_remote_management_key",
     "proxy",
     "proxy_pass",
 }
@@ -204,6 +205,10 @@ class ConfigBody(BaseModel):
     grok2api_auto_add_remote: Optional[bool] = None
     grok2api_remote_base: Optional[str] = None
     grok2api_remote_app_key: Optional[str] = None
+    cpa_export_enabled: Optional[bool] = None
+    cpa_remote_upload_enabled: Optional[bool] = None
+    cpa_remote_base: Optional[str] = None
+    cpa_remote_management_key: Optional[str] = None
     defaultDomains: Optional[str] = None
     email_provider: Optional[str] = None
     yyds_api_key: Optional[str] = None
@@ -291,7 +296,7 @@ def _probe_g2a(app_key: str = "") -> Dict[str, Any]:
         "error": "",
     }
 
-    def _http_status(url: str, timeout: float = 4.0) -> int:
+    def _http_status(url: str, timeout: float = 1.2) -> int:
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "grok-register-integration"},
@@ -311,7 +316,7 @@ def _probe_g2a(app_key: str = "") -> Dict[str, Any]:
     for path in ("/health", "/", "/v1/models"):
         url = f"{G2A_INTERNAL_BASE}{path}"
         try:
-            status = _http_status(url, timeout=4.0)
+            status = _http_status(url, timeout=1.2)
             # reachable if we got any HTTP status (incl. 401/403/404/307)
             if 100 <= status < 600:
                 result["ok"] = True
@@ -348,24 +353,117 @@ def _probe_g2a(app_key: str = "") -> Dict[str, Any]:
     return result
 
 
+
+
+def _normalize_cpamp_base(base: str) -> str:
+    b = (base or "").strip().rstrip("/")
+    if not b:
+        return ""
+    lower = b.lower()
+    for junk in ("/management.html#", "/management.html", "/management#", "/management"):
+        if lower.endswith(junk):
+            b = b[: -len(junk)].rstrip("/")
+            break
+    if b.endswith("#"):
+        b = b[:-1].rstrip("/")
+    return b
+
+
+def _probe_cpamp(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Probe CPA Manager Plus management API (auth-files)."""
+    import urllib.error
+    import urllib.request
+
+    enabled = bool(cfg.get("cpa_remote_upload_enabled"))
+    base = _normalize_cpamp_base(
+        str(cfg.get("cpa_remote_base") or cfg.get("grok2api_remote_base") or "")
+    )
+    key = str(
+        cfg.get("cpa_remote_management_key") or cfg.get("grok2api_remote_app_key") or ""
+    ).strip()
+    result: Dict[str, Any] = {
+        "ok": False,
+        "enabled": enabled,
+        "base": base,
+        "has_key": bool(key) and "*" not in key,
+        "auth_count": None,
+        "error": "",
+        "management_url": f"{base}/management.html" if base else "",
+    }
+    if not base:
+        result["error"] = "missing cpa_remote_base"
+        return result
+    try:
+        req = urllib.request.Request(
+            f"{base}/health",
+            headers={"User-Agent": "grok-register-cpamp"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            result["ok"] = 100 <= int(resp.status) < 600
+    except urllib.error.HTTPError as exc:
+        result["ok"] = 100 <= int(exc.code) < 600
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+
+    if key and "*" not in key:
+        try:
+            url = f"{base}/v0/management/auth-files"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "grok-register-cpamp",
+                    "Authorization": f"Bearer {key}",
+                },
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+                files = payload.get("files") if isinstance(payload, dict) else None
+                if isinstance(files, list):
+                    result["auth_count"] = len(files)
+        except Exception as exc:
+            if result["ok"]:
+                result["error"] = f"online; auth-files: {exc}"
+            else:
+                result["error"] = str(exc)
+    return result
+
+
 @app.get("/api/integration")
 async def api_integration(x_access_key: Optional[str] = Header(None)):
     _require_auth(x_access_key)
     engine.load_config()
-    cfg = engine.config
+    cfg = dict(engine.config)
     remote_base = str(cfg.get("grok2api_remote_base") or "").strip()
     remote_key = str(cfg.get("grok2api_remote_app_key") or "").strip()
-    g2a = _probe_g2a(remote_key)
+    # Blocking probes off the event loop so the Web UI stays responsive.
+    g2a, cpamp = await asyncio.gather(
+        asyncio.to_thread(_probe_g2a, remote_key),
+        asyncio.to_thread(_probe_cpamp, cfg),
+    )
     linked = bool(cfg.get("grok2api_auto_add_remote")) and bool(remote_base) and bool(remote_key)
     return {
         "ok": True,
         "g2a": g2a,
         "linked": linked,
+        "cpamp": cpamp,
         "config": {
             "auto_add_remote": bool(cfg.get("grok2api_auto_add_remote")),
             "remote_base": remote_base or g2a["internal_base"],
             "pool_name": cfg.get("grok2api_pool_name") or "ssoBasic",
             "has_app_key": bool(remote_key),
+            "cpa_export_enabled": bool(cfg.get("cpa_export_enabled", True)),
+            "cpa_remote_upload_enabled": bool(cfg.get("cpa_remote_upload_enabled")),
+            "cpa_remote_base": str(cfg.get("cpa_remote_base") or ""),
+            "has_cpa_remote_management_key": bool(
+                str(
+                    cfg.get("cpa_remote_management_key")
+                    or cfg.get("grok2api_remote_app_key")
+                    or ""
+                ).strip()
+            ),
         },
         "defaults": {
             "remote_base": G2A_INTERNAL_BASE,

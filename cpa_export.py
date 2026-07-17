@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from cpa_remote_upload import maybe_upload_to_cpamp
+
 _REG_DIR = Path(__file__).resolve().parent
 _DEFAULT_OUT = _REG_DIR / "cpa_auths"
 _DEFAULT_CPA = Path("")  # empty = do not assume a machine-local CPA path
@@ -220,6 +222,17 @@ def export_cpa_xai_for_account(
             log(f"[cpa] hotload copy failed: {e}")
             result["cpa_copy_error"] = str(e)
 
+    if result.get("ok") and result.get("path"):
+        try:
+            remote = maybe_upload_to_cpamp(result["path"], cfg, log=log)
+            if remote.get("ok"):
+                result["cpa_remote_upload"] = remote
+            elif not remote.get("skipped"):
+                result["cpa_remote_upload_error"] = remote.get("error") or str(remote)
+        except Exception as e:  # noqa: BLE001
+            log(f"[cpa] CPAMP remote upload failed: {e}")
+            result["cpa_remote_upload_error"] = str(e)
+
     # failure log under register dir
     if not result.get("ok"):
         fail_path = out_dir / "cpa_auth_failed.txt"
@@ -229,3 +242,4 @@ def export_cpa_xai_for_account(
             raise RuntimeError(f"CPA mint required but failed: {result.get('error')}")
 
     return result
+

@@ -628,8 +628,51 @@
             <a id="openG2aBtn" class="btn" href="http://127.0.0.1:8010/admin/account" target="_blank" rel="noopener">打开账号池</a>
           </div>
           <div class="tips">
-            <p>· 内网优先：<code class="inline">http://127.0.0.1:8010</code></p>
+            <p>· 内网优先：<code class="inline">http://127.0.0.1:8010</code>（本机未跑 grok2api 时「离线」属正常）</p>
             <p>· 密钥显示 <code class="inline">***</code> 表示已保存，不改则保留。</p>
+            <p>· 这是 <b>SSO 网页号池</b>。CPAMP / 4.5 请用下方「CPA → CPAMP」区块。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-title">CPA → CPAMP 自动上传</div>
+              <div class="section-sub">注册后 mint 的 xai-*.json 自动上传到 CPA Manager Plus（Grok 4.5）</div>
+            </div>
+            <span class="status-chip">
+              <span id="cpampDot" class="dot idle"></span>
+              <span id="cpampLabel">检测中</span>
+            </span>
+          </div>
+          <div class="form-grid two">
+            <div class="field">
+              <div class="label">上传状态</div>
+              <div id="cpampLinkedText" style="font-weight:650;padding-top:8px;font-size:14px">—</div>
+            </div>
+            <div class="field">
+              <div class="label">远端 auth 数量</div>
+              <div id="cpampCount" style="font-weight:650;padding-top:8px;font-size:14px">—</div>
+            </div>
+            <label class="check-row"><input id="cpa_export_enabled" type="checkbox" checked /> 注册后 mint CPA（xai-*.json）</label>
+            <label class="check-row"><input id="cpa_remote_upload_enabled" type="checkbox" /> 自动上传到 CPAMP</label>
+            <div class="field span-2">
+              <div class="label">CPAMP 地址（不要带 management.html）</div>
+              <input id="cpa_remote_base" type="text" placeholder="https://grok1.duckdns.org" />
+            </div>
+            <div class="field span-2">
+              <div class="label">CPA Management Key（Bearer）</div>
+              <input id="cpa_remote_management_key" type="password" autocomplete="off" placeholder="面板管理密钥，显示 *** 表示已保存" />
+            </div>
+          </div>
+          <div class="action-bar">
+            <button id="refreshCpampBtn" class="btn btn-ghost" type="button">刷新 CPAMP 状态</button>
+            <a id="openCpampBtn" class="btn" href="https://grok1.duckdns.org/management.html" target="_blank" rel="noopener">打开 CPAMP</a>
+          </div>
+          <div class="tips">
+            <p>· 这条是 <b>OIDC / 4.5</b>，与上方「SSO 号池」无关。</p>
+            <p>· API：<code class="inline">POST /v0/management/auth-files</code>。地址填域名根路径。</p>
+            <p>· 本机 mint 目录：<code class="inline">cpa_auths/</code>，成功日志：<code class="inline">CPAMP upload ok</code>。</p>
           </div>
         </div>
       </div>
@@ -915,6 +958,10 @@
         grok2api_remote_app_key: $('grok2api_remote_app_key').value,
         grok2api_pool_name: $('grok2api_pool_name').value.trim() || 'ssoBasic',
         grok2api_local_token_file: $('grok2api_local_token_file').value.trim(),
+        cpa_export_enabled: $('cpa_export_enabled') ? $('cpa_export_enabled').checked : true,
+        cpa_remote_upload_enabled: $('cpa_remote_upload_enabled') ? $('cpa_remote_upload_enabled').checked : false,
+        cpa_remote_base: $('cpa_remote_base') ? $('cpa_remote_base').value.trim() : '',
+        cpa_remote_management_key: $('cpa_remote_management_key') ? $('cpa_remote_management_key').value : '',
       };
     }
 
@@ -987,6 +1034,10 @@
       setVal('grok2api_remote_app_key', c.grok2api_remote_app_key || '');
       setVal('grok2api_pool_name', c.grok2api_pool_name || 'ssoBasic');
       setVal('grok2api_local_token_file', c.grok2api_local_token_file || '');
+      setVal('cpa_export_enabled', c.cpa_export_enabled !== false);
+      setVal('cpa_remote_upload_enabled', !!c.cpa_remote_upload_enabled);
+      setVal('cpa_remote_base', c.cpa_remote_base || '');
+      setVal('cpa_remote_management_key', c.cpa_remote_management_key || '');
       appendLog('[*] 配置已加载');
     }
 
@@ -1111,20 +1162,39 @@
         const g2a = data.g2a || {};
         const ok = !!g2a.ok;
         $('g2aDot').className = 'dot ' + (ok ? 'run' : 'idle');
-        $('g2aLabel').textContent = ok ? '在线' : '离线';
+        $('g2aLabel').textContent = ok ? '在线' : '离线（本机 8010）';
         $('g2aLinkedText').textContent = data.linked ? '已开启自动入池' : '未联动';
         $('g2aLinkedText').style.color = data.linked ? 'var(--ok)' : 'var(--muted)';
-        $('g2aCount').textContent = g2a.account_count == null ? '（需正确 app_key）' : String(g2a.account_count);
+        $('g2aCount').textContent = g2a.account_count == null ? '（本机号池未连通/需 app_key）' : String(g2a.account_count);
         if (g2a.admin_url) {
-          // open account pool instead of login when already in admin
           $('openG2aBtn').href = (g2a.public_url || 'http://127.0.0.1:8010') + '/admin/account';
         }
         if (!$('grok2api_remote_base').value && data.defaults?.remote_base) {
           $('grok2api_remote_base').value = data.defaults.remote_base;
         }
         if (!$('grok2api_pool_name').value) $('grok2api_pool_name').value = 'ssoBasic';
+
+        const cpamp = data.cpamp || {};
+        const cpOk = !!cpamp.ok;
+        if ($('cpampDot')) {
+          $('cpampDot').className = 'dot ' + (cpOk ? 'run' : 'idle');
+          $('cpampLabel').textContent = cpOk ? '在线' : (cpamp.error ? '离线' : '未配置');
+          const enabled = !!(data.config && data.config.cpa_remote_upload_enabled) || !!cpamp.enabled;
+          $('cpampLinkedText').textContent = enabled ? (cpOk ? '已开启自动上传' : '已开启但远端未连通') : '未开启自动上传';
+          $('cpampLinkedText').style.color = (enabled && cpOk) ? 'var(--ok)' : 'var(--muted)';
+          $('cpampCount').textContent = cpamp.auth_count == null
+            ? (cpOk ? '（需正确 Management Key）' : '—')
+            : String(cpamp.auth_count);
+          if (cpamp.management_url && $('openCpampBtn')) {
+            $('openCpampBtn').href = cpamp.management_url;
+          }
+          if ($('cpa_remote_base') && !$('cpa_remote_base').value && cpamp.base) {
+            $('cpa_remote_base').value = cpamp.base;
+          }
+        }
       } catch (_) {
         $('g2aLabel').textContent = '检测失败';
+        if ($('cpampLabel')) $('cpampLabel').textContent = '检测失败';
       }
     }
 
@@ -1221,6 +1291,7 @@
     $('linkG2aBtn').addEventListener('click', () => linkG2a(true));
     $('unlinkG2aBtn').addEventListener('click', () => linkG2a(false));
     $('refreshG2aBtn').addEventListener('click', refreshIntegration);
+    if ($('refreshCpampBtn')) $('refreshCpampBtn').addEventListener('click', refreshIntegration);
     $('clearLogBtn').addEventListener('click', () => {
       $('term').innerHTML = '';
       knownLogLines = new Set();
