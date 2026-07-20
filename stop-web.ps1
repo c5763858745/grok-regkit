@@ -1,5 +1,5 @@
 # Stop grok-regkit Web
-$root = "F:\grok-regkit"
+$root = $PSScriptRoot
 $pidFile = Join-Path $root "server.pid"
 if (Test-Path $pidFile) {
   $id = Get-Content $pidFile | Select-Object -First 1

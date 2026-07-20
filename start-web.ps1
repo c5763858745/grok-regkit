@@ -1,5 +1,5 @@
 # Start grok-regkit Web
-$root = "F:\grok-regkit"
+$root = $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $pidFile = Join-Path $root "server.pid"
 $log = Join-Path $root "uvicorn.log"
